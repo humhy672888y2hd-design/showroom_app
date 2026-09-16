@@ -1,0 +1,211 @@
+from flask import Flask, render_template_string, request, redirect, url_for
+import sqlite3
+from datetime import datetime
+import os
+
+app = Flask(__name__)
+
+# --- ڈیٹا بیس کی شروعات ---
+def init_db():
+    conn = sqlite3.connect("showroom_online.db")
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS customers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT, cnic TEXT, phone TEXT, address TEXT,
+            guarantor_name TEXT, guarantor_cnic TEXT, guarantor_phone TEXT, guarantor_address TEXT,
+            bike_model TEXT, engine_no TEXT, chassis_no TEXT, color TEXT,
+            total_price REAL, down_payment REAL, monthly_installment REAL,
+            total_months INTEGER, paid_installments INTEGER DEFAULT 0,
+            due_day INTEGER, cust_reminder_phone TEXT, owner_reminder_phone TEXT,
+            cust_reminder_day INTEGER, owner_reminder_day INTEGER, entry_date TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# --- HTML ڈیزائن ٹیمپلیٹ ---
+HTML_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Motorcycle Showroom Portal</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 15px; background-color: #f0f2f5; }
+        h2 { color: #1a252f; text-align: center; margin-bottom: 20px; }
+        .form-container { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 25px; }
+        .section-title { background: #2c3e50; color: white; padding: 8px 12px; border-radius: 5px; font-size: 15px; margin-top: 15px; font-weight: bold; }
+        .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 10px; }
+        input { padding: 9px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; width: 100%; box-sizing: border-box; }
+        .btn-save { width: 100%; padding: 12px; background-color: #27ae60; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; font-weight: bold; margin-top: 18px; }
+        .table-responsive { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-top: 15px; }
+        th, td { padding: 10px 5px; border-bottom: 1px solid #ddd; text-align: center; font-size: 12px; }
+        th { background-color: #34495e; color: white; }
+        .btn-pay { padding: 6px 10px; background-color: #2980b9; color: white; border: none; border-radius: 3px; text-decoration: none; display: inline-block; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h2>🏍️ Showroom Online Portal</h2>
+    
+    <div class="form-container">
+        <form action="/add" method="POST">
+            
+            <div class="section-title">👤 Customer Details (گاہک کی تفصیلات)</div>
+            <div class="form-grid">
+                <input type="text" name="name" placeholder="Customer Name" required>
+                <input type="text" name="cnic" placeholder="CNIC Number" required>
+                <input type="text" name="phone" placeholder="Phone (+923...)" required>
+                <input type="text" name="address" placeholder="Customer Address" required>
+            </div>
+
+            <div class="section-title">🤝 Guarantor Details (گواہ کی تفصیلات)</div>
+            <div class="form-grid">
+                <input type="text" name="g_name" placeholder="Guarantor Name" required>
+                <input type="text" name="g_cnic" placeholder="Guarantor CNIC" required>
+                <input type="text" name="g_phone" placeholder="Guarantor Phone (+923...)" required>
+                <input type="text" name="g_address" placeholder="Guarantor Address" required>
+            </div>
+
+            <div class="section-title">🏍️ Bike Details (بائیک کی تفصیلات)</div>
+            <div class="form-grid">
+                <input type="text" name="bike_model" placeholder="Bike Model / Name" required>
+                <input type="text" name="engine_no" placeholder="Engine Number" required>
+                <input type="text" name="chassis_no" placeholder="Chassis Number" required>
+                <input type="text" name="color" placeholder="Bike Color" required>
+            </div>
+
+            <div class="section-title">💳 Payment & Reminder Details (پیمنٹ اور ریمائنڈر ترتیبات)</div>
+            <div class="form-grid">
+                <input type="number" name="price" placeholder="Total Price" required>
+                <input type="number" name="down" placeholder="Down Payment" required>
+                <input type="number" name="months" placeholder="Total Months" required>
+                <input type="number" name="due_day" placeholder="Monthly Due Date (مثلاً 5)" required>
+                <input type="text" name="cust_rem_phone" placeholder="Customer Reminder Phone (+923...)" required>
+                <input type="number" name="cust_rem_day" placeholder="Customer Rem. Date (مثلاً 3)" required>
+                <input type="text" name="owner_rem_phone" placeholder="Owner Reminder Phone (+923...)" required>
+                <input type="number" name="owner_rem_day" placeholder="Owner Rem. Date (مثلاً 8)" required>
+            </div>
+
+            <button type="submit" class="btn-save">Save Record</button>
+        </form>
+    </div>
+
+    <h3>📋 Showroom Records</h3>
+    <div class="table-responsive">
+        <table>
+            <tr>
+                <th>ID</th>
+                <th>Customer Info</th>
+                <th>Guarantor Info</th>
+                <th>Bike Info</th>
+                <th>Payment Details</th>
+                <th>Paid Months</th>
+                <th>Remaining Rs</th>
+                <th>Due Date</th>
+                <th>Reminder Config</th>
+                <th>Action</th>
+            </tr>
+            {% for row in customers %}
+            {% set remaining_rs = (row[13] - row[14]) - (row[17] * row[15]) %}
+
+            <tr>
+                <td>{{ row[0] }}</td>
+                <td><b>{{ row[1] }}</b><br><small>{{ row[3] }}</small></td>
+                <td><b>{{ row[5] }}</b><br><small>{{ row[7] }}</small></td>
+                <td>{{ row[9] }} ({{ row[12] }})<br><small>Eng:{{ row[10] }}</small></td>
+                <td>Tot: {{ "%.0f"|format(row[13]) }}<br>M: {{ "%.0f"|format(row[15]) }}</td>
+                <td>{{ row[17] }} / {{ row[16] }}</td>
+                <td><b style="color: #c0392b;">Rs. {{ "%.0f"|format(remaining_rs if remaining_rs > 0 else 0) }}</b></td>
+                <td>Date {{ row[18] }}</td>
+                <td>
+                    <small><b>Cust Rem:</b> Date {{ row[21] }} ({{ row[19] }})</small><br>
+                    <small><b>Owner Rem:</b> Date {{ row[22] }} ({{ row[20] }})</small>
+                </td>
+                <td>
+                    <a href="/pay/{{ row[0] }}" class="btn-pay">Receive Pay</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+</body>
+</html>
+'''
+
+# --- روٹس (Routes) ---
+@app.route('/')
+def home():
+    conn = sqlite3.connect("showroom_online.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM customers")
+    rows = cursor.fetchall()
+    conn.close()
+    return render_template_string(HTML_TEMPLATE, customers=rows)
+
+@app.route('/add', methods=['POST'])
+def add_customer():
+    name = request.form['name']
+    cnic = request.form['cnic']
+    phone = request.form['phone']
+    address = request.form['address']
+    
+    g_name = request.form['g_name']
+    g_cnic = request.form['g_cnic']
+    g_phone = request.form['g_phone']
+    g_address = request.form['g_address']
+    
+    bike_model = request.form['bike_model']
+    engine_no = request.form['engine_no']
+    chassis_no = request.form['chassis_no']
+    color = request.form['color']
+    
+    price = float(request.form['price'])
+    down = float(request.form['down'])
+    months = int(request.form['months'])
+    due_day = int(request.form['due_day'])
+    
+    cust_rem_phone = request.form['cust_rem_phone']
+    cust_rem_day = int(request.form['cust_rem_day'])
+    owner_rem_phone = request.form['owner_rem_phone']
+    owner_rem_day = int(request.form['owner_rem_day'])
+    
+    monthly = (price - down) / months
+    entry_date = datetime.now().strftime("%Y-%m-%d")
+    
+    conn = sqlite3.connect("showroom_online.db")
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO customers (
+            name, cnic, phone, address,
+            guarantor_name, guarantor_cnic, guarantor_phone, guarantor_address,
+            bike_model, engine_no, chassis_no, color,
+            total_price, down_payment, monthly_installment, total_months, paid_installments,
+            due_day, cust_reminder_phone, owner_reminder_phone, cust_reminder_day, owner_reminder_day, entry_date
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+    ''', (name, cnic, phone, address, g_name, g_cnic, g_phone, g_address, bike_model, engine_no, chassis_no, color, price, down, monthly, months, due_day, cust_rem_phone, owner_rem_phone, cust_rem_day, owner_rem_day, entry_date))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('home'))
+
+@app.route('/pay/<int:cust_id>')
+def pay_installment(cust_id):
+    conn = sqlite3.connect("showroom_online.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT paid_installments, total_months FROM customers WHERE id = ?", (cust_id,))
+    row = cursor.fetchone()
+    if row:
+        paid, total = row
+        if paid < total:
+            cursor.execute("UPDATE customers SET paid_installments = ? WHERE id = ?", (paid + 1, cust_id))
+            conn.commit()
+        conn.close()
+    return redirect(url_for('home'))
+
+# --- آن لائن سرور پورٹ سیٹنگ ---
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
